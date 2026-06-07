@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "compression-core",
+    "compressors/*",
+]
+resolver = "2"
