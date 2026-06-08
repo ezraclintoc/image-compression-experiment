@@ -20,7 +20,7 @@ impl ImageCompressor for MyCompressor {
         // TODO: compress `raw` into `data`
         let data = raw.to_vec();
 
-        Ok(CompressedImage { data, width, height })
+        Ok(CompressedImage { data, width, height, metadata: compression_core::CompressionMetadata::None })
     }
 
     fn decompress(&self, compressed: &CompressedImage) -> Result<RgbImage, String> {

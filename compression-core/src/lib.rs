@@ -1,6 +1,7 @@
+use image::{ImageFormat, RgbImage};
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
-use image::{RgbImage, ImageFormat};
 
 mod util;
 pub use util::{pixel_index, rgb_index};
@@ -12,10 +13,15 @@ pub struct LibraryConfig {
 }
 
 pub fn load_image_library(config: &LibraryConfig) -> Result<Vec<PathBuf>, String> {
-    if !config.library_path.exists() { return Err("Library path doesn't exist!".to_string()) }
-    if !config.library_path.is_dir() { return Err("Library path is not a directory!".to_string()) }
+    if !config.library_path.exists() {
+        return Err("Library path doesn't exist!".to_string());
+    }
+    if !config.library_path.is_dir() {
+        return Err("Library path is not a directory!".to_string());
+    }
 
-    let library_children = config.library_path
+    let library_children = config
+        .library_path
         .read_dir()
         .map_err(|_| "Failed to read directory entries!".to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -24,7 +30,13 @@ pub fn load_image_library(config: &LibraryConfig) -> Result<Vec<PathBuf>, String
     let mut images = Vec::new();
     for entry in &library_children {
         let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |ext| config.supported_formats.contains(&ext.to_string_lossy().into_owned())) {
+        if path.is_file()
+            && path.extension().map_or(false, |ext| {
+                config
+                    .supported_formats
+                    .contains(&ext.to_string_lossy().into_owned())
+            })
+        {
             images.push(path);
         } else if path.is_dir() && config.search_subdirectories {
             if let Ok(mut sub_images) = load_image_library(config) {
@@ -66,10 +78,25 @@ pub fn save_image(image: &RgbImage, path: &PathBuf) -> Result<(), String> {
     image.save(path).map_err(|e| e.to_string())
 }
 
+// To add metadata for a new compressor:
+//   1. Add a variant here with the fields your decompressor needs to reconstruct state
+//   2. Set it in your compress() implementation
+//   3. Match on it in your decompress() implementation
+//   4. If your compressor needs no metadata, use CompressionMetadata::None
+#[derive(Clone, Debug)]
+pub enum CompressionMetadata {
+    None,
+    Huffman {
+        // Frequency table lets the decompressor rebuild the exact same Huffman tree
+        freq_table: HashMap<(u32, u8), (u8, u8, u8)>,
+    },
+}
+
 pub struct CompressedImage {
     pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    pub metadata: CompressionMetadata,
 }
 
 pub trait ImageCompressor {
@@ -91,9 +118,16 @@ impl CompressionStats {
     pub fn print(&self) {
         let ratio = self.compressed_size as f64 / self.raw_size as f64 * 100.0;
         println!("Raw size:        {} bytes", self.raw_size);
-        println!("Compressed size: {} bytes ({:.1}%)", self.compressed_size, ratio);
+        println!(
+            "Compressed size: {} bytes ({:.1}%)",
+            self.compressed_size, ratio
+        );
         if let Some(png) = self.png_size {
-            println!("PNG size:        {} bytes ({:.1}%)", png, png as f64 / self.raw_size as f64 * 100.0);
+            println!(
+                "PNG size:        {} bytes ({:.1}%)",
+                png,
+                png as f64 / self.raw_size as f64 * 100.0
+            );
         }
         println!("Compress time:   {:.2}ms", self.compress_ms);
         println!("Decompress time: {:.2}ms", self.decompress_ms);
@@ -110,7 +144,11 @@ impl CompressionStats {
 
     pub fn print_average(stats: &[CompressionStats]) {
         let n = stats.len() as f64;
-        let ratio = stats.iter().map(|s| s.compressed_size as f64 / s.raw_size as f64 * 100.0).sum::<f64>() / n;
+        let ratio = stats
+            .iter()
+            .map(|s| s.compressed_size as f64 / s.raw_size as f64 * 100.0)
+            .sum::<f64>()
+            / n;
         let compress_ms = stats.iter().map(|s| s.compress_ms).sum::<f64>() / n;
         let decompress_ms = stats.iter().map(|s| s.decompress_ms).sum::<f64>() / n;
         let lossless_count = stats.iter().filter(|s| s.lossless).count();
@@ -123,10 +161,22 @@ impl CompressionStats {
         if !lossy.is_empty() {
             let m = lossy.len() as f64;
             println!("Avg accuracy (lossy images):");
-            println!("  Hue:        {:.1}%", lossy.iter().map(|s| s.hue_similarity).sum::<f64>() / m * 100.0);
-            println!("  Saturation: {:.1}%", lossy.iter().map(|s| s.saturation_similarity).sum::<f64>() / m * 100.0);
-            println!("  Brightness: {:.1}%", lossy.iter().map(|s| s.brightness_similarity).sum::<f64>() / m * 100.0);
-            println!("  Edges:      {:.1}%", lossy.iter().map(|s| s.edge_similarity).sum::<f64>() / m * 100.0);
+            println!(
+                "  Hue:        {:.1}%",
+                lossy.iter().map(|s| s.hue_similarity).sum::<f64>() / m * 100.0
+            );
+            println!(
+                "  Saturation: {:.1}%",
+                lossy.iter().map(|s| s.saturation_similarity).sum::<f64>() / m * 100.0
+            );
+            println!(
+                "  Brightness: {:.1}%",
+                lossy.iter().map(|s| s.brightness_similarity).sum::<f64>() / m * 100.0
+            );
+            println!(
+                "  Edges:      {:.1}%",
+                lossy.iter().map(|s| s.edge_similarity).sum::<f64>() / m * 100.0
+            );
         }
     }
 }
@@ -146,6 +196,18 @@ pub fn compression_stats(
         .ok()
         .map(|_| png_bytes.len());
     let lossless = original.as_raw() == decompressed.as_raw();
-    let accuracy = if lossless { None } else { compare_images(original, decompressed).ok() };
-    CompressionStats { raw_size, compressed_size, png_size, lossless, accuracy, compress_ms, decompress_ms }
+    let accuracy = if lossless {
+        None
+    } else {
+        compare_images(original, decompressed).ok()
+    };
+    CompressionStats {
+        raw_size,
+        compressed_size,
+        png_size,
+        lossless,
+        accuracy,
+        compress_ms,
+        decompress_ms,
+    }
 }

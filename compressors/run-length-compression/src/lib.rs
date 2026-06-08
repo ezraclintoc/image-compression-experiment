@@ -35,6 +35,7 @@ impl ImageCompressor for RunLengthCompressor {
             data,
             width,
             height,
+            metadata: compression_core::CompressionMetadata::None,
         })
     }
 

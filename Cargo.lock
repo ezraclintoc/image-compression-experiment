@@ -343,6 +343,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "huffman-compressor"
+version = "0.1.0"
+dependencies = [
+ "compression-core",
+ "image",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,6 +803,7 @@ name = "runner"
 version = "0.1.0"
 dependencies = [
  "compression-core",
+ "huffman-compressor",
  "image",
  "run-length-channel-compression",
  "run-length-compression",

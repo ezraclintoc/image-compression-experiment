@@ -1,6 +1,7 @@
 use compression_core::{
     CompressedImage, CompressionStats, ImageCompressor, compression_stats, load_image,
 };
+use huffman_compressor::HuffmanCompressor;
 use image::{ImageFormat, RgbImage};
 use run_length_channel_compression::RunLengthChannelCompressor;
 use run_length_compression::RunLengthCompressor;
@@ -20,6 +21,7 @@ impl ImageCompressor for PngCompressor {
             data: buf,
             width: image.width(),
             height: image.height(),
+            metadata: compression_core::CompressionMetadata::None,
         })
     }
 
@@ -35,6 +37,7 @@ fn all_compressors() -> Vec<(&'static str, Box<dyn ImageCompressor>)> {
         ("PNG", Box::new(PngCompressor)),
         ("RLE", Box::new(RunLengthCompressor::new())),
         ("RLCE", Box::new(RunLengthChannelCompressor::new())),
+        ("Huffman", Box::new(HuffmanCompressor::new())),
     ]
 }
 

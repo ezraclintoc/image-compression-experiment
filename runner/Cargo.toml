@@ -8,4 +8,5 @@ default-run = "runner"
 compression-core = { path = "../compression-core" }
 run-length-compression = { path = "../compressors/run-length-compression" }
 run-length-channel-compression = { path = "../compressors/run-length-channel-compression"}
+huffman-compressor = { path = "../compressors/huffman-compressor" }
 image = "0.25.10"
