@@ -60,3 +60,13 @@ pub fn sobel_edge_histogram(img: &RgbImage) -> [f64; 16] {
 pub fn histogram_intersection<const N: usize>(a: &[f64; N], b: &[f64; N]) -> f64 {
     a.iter().zip(b.iter()).map(|(x, y)| x.min(*y)).sum()
 }
+
+/// Pixel index into a flat row-major buffer.
+pub fn pixel_index(x: u32, y: u32, width: u32) -> usize {
+    (y * width + x) as usize
+}
+
+/// Byte index into a flat RGB buffer (3 bytes per pixel).
+pub fn rgb_index(x: u32, y: u32, width: u32) -> usize {
+    pixel_index(x, y, width) * 3
+}

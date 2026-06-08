@@ -1,0 +1,9 @@
+[package]
+name = "runner"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+compression-core = { path = "../compression-core" }
+run-length-compression = { path = "../compressors/run-length-compression" }
+image = "0.25.10"
