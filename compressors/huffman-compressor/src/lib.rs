@@ -1,6 +1,7 @@
 use compression_core::{CompressedImage, CompressionMetadata, ImageCompressor};
 use image::RgbImage;
-use std::collections::HashMap;
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashMap};
 
 #[derive(Clone)]
 enum HuffmanNode {
@@ -32,46 +33,63 @@ impl HuffmanCompressor {
     }
 }
 
+impl PartialEq for HuffmanNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.freq() == other.freq()
+    }
+}
+impl Eq for HuffmanNode {}
+impl PartialOrd for HuffmanNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HuffmanNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.freq().cmp(&other.freq())
+    }
+}
+
+
 impl ImageCompressor for HuffmanCompressor {
     fn compress(&self, image: &RgbImage) -> Result<CompressedImage, String> {
         let width = image.width();
         let height = image.height();
         let raw: &[u8] = image.as_raw();
 
-        let frequencies_map = get_color_frequencies(image);
-        let sorted_frequency_map = sort_color_frequencies(frequencies_map);
-        let mut nodes = convert_to_nodes(sorted_frequency_map);
+        // Min-heap of leaves keyed on frequency; repeatedly merge the two
+        // least-frequent nodes until a single tree (the root) remains.
+        let mut heap: BinaryHeap<Reverse<HuffmanNode>> = get_color_frequencies(image)
+            .into_iter()
+            .map(|(value, freq)| Reverse(HuffmanNode::Leaf { value, freq }))
+            .collect();
 
-        while nodes.len() > 1 {
-            let right = nodes.pop().unwrap();
-            let left = nodes.pop().unwrap();
+        while heap.len() > 1 {
+            let Reverse(left) = heap.pop().unwrap();
+            let Reverse(right) = heap.pop().unwrap();
 
-            let node = HuffmanNode::Internal {
-                left: Box::new(left.clone()),
-                right: Box::new(right.clone()),
-                freq: left.freq() + right.freq(),
-            };
-
-            let pos = nodes
-                .binary_search_by(|n| node.freq().cmp(&n.freq()))
-                .unwrap_or_else(|x| x);
-            nodes.insert(pos, node);
+            let freq = left.freq() + right.freq();
+            heap.push(Reverse(HuffmanNode::Internal {
+                left: Box::new(left),
+                right: Box::new(right),
+                freq,
+            }));
         }
 
+        // An empty image leaves an empty heap and no codes; the encode loop
+        // below then runs zero times, producing empty data.
         let mut codes = HashMap::new();
-        explore_node(&nodes[0], 0, 0, &mut codes);
+        if let Some(Reverse(root)) = heap.pop() {
+            explore_node(&root, 0, 0, &mut codes);
+        }
 
         let mut writer = BitWriter::new();
-        let mut i: usize = 0;
-        while i < raw.len() {
-            let pixel = (raw[i], raw[i + 1], raw[i + 2]);
-            let (code, len) = codes.get(&pixel).unwrap();
-
+        for pixel in raw.chunks_exact(3) {
+            let (code, len) = codes.get(&(pixel[0], pixel[1], pixel[2])).unwrap();
             writer.write_code(*code, *len);
-            i += 3;
         }
 
-        let data = writer.bytes;
+        let data = writer.finish();
 
         let flipped: HashMap<(u32, u8), (u8, u8, u8)> =
             codes.iter().map(|(k, v)| (*v, *k)).collect();
@@ -129,23 +147,6 @@ fn get_color_frequencies(image: &RgbImage) -> HashMap<(u8, u8, u8), u32> {
     map
 }
 
-fn sort_color_frequencies(map: HashMap<(u8, u8, u8), u32>) -> Vec<((u8, u8, u8), u32)> {
-    let mut vec: Vec<_> = map.into_iter().collect();
-    vec.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-    vec
-}
-
-fn convert_to_nodes(map: Vec<((u8, u8, u8), u32)>) -> Vec<HuffmanNode> {
-    let nodes = map
-        .iter()
-        .map(|m| HuffmanNode::Leaf {
-            value: m.0,
-            freq: m.1,
-        })
-        .collect();
-    nodes
-}
-
 fn explore_node(
     node: &HuffmanNode,
     code: u32,
@@ -163,41 +164,55 @@ fn explore_node(
     }
 }
 
+/// Buffered bit writer: bits accumulate in a 64-bit register and are flushed a
+/// whole byte at a time, instead of touching the output `Vec` once per bit.
+/// Bits are packed MSB-first (matching `BitReader`).
 struct BitWriter {
-    pub bytes: Vec<u8>,
-    bit_pos: u8,
+    bytes: Vec<u8>,
+    acc: u64,   // pending bits, held in the low `nbits` bits of the register
+    nbits: u32, // valid buffered bits; always < 8 between `write_code` calls
 }
 
 impl BitWriter {
     fn new() -> Self {
         BitWriter {
             bytes: Vec::new(),
-            bit_pos: 0,
+            acc: 0,
+            nbits: 0,
         }
     }
 
-    fn write_bit(&mut self, bit: bool) {
-        if self.bit_pos == 0 {
-            self.bytes.push(0);
-        }
-        if bit {
-            let last = self.bytes.last_mut().unwrap();
-            *last |= 1 << (7 - self.bit_pos);
-        }
-        self.bit_pos = (self.bit_pos + 1) % 8;
-    }
-
+    /// Append the low `len` bits of `code` (which must be < 2^len), MSB-first.
+    /// With `nbits < 8` on entry and `len <= 32`, the register never overflows.
     fn write_code(&mut self, code: u32, len: u8) {
-        for i in (0..len).rev() {
-            self.write_bit((code >> i) & 1 == 1);
+        let len = len as u32;
+        self.acc = (self.acc << len) | code as u64;
+        self.nbits += len;
+        while self.nbits >= 8 {
+            self.nbits -= 8;
+            self.bytes.push((self.acc >> self.nbits) as u8);
         }
+    }
+
+    /// Flush a trailing partial byte (zero-padded on the right) and return the
+    /// finished buffer.
+    fn finish(mut self) -> Vec<u8> {
+        if self.nbits > 0 {
+            self.bytes.push((self.acc << (8 - self.nbits)) as u8);
+            self.nbits = 0;
+        }
+        self.bytes
     }
 }
 
+/// Buffered bit reader mirroring `BitWriter`: refills a 64-bit register from the
+/// byte buffer and serves bits from it, avoiding the per-bit bounds check and
+/// `% 8` of a naive reader.
 struct BitReader {
     bytes: Vec<u8>,
     byte_pos: usize,
-    bit_pos: u8,
+    acc: u64,   // buffered bits; the next bit is the MSB of the low `nbits` bits
+    nbits: u32,
 }
 
 impl BitReader {
@@ -205,20 +220,27 @@ impl BitReader {
         BitReader {
             bytes,
             byte_pos: 0,
-            bit_pos: 0,
+            acc: 0,
+            nbits: 0,
         }
     }
 
     fn read_bit(&mut self) -> Option<bool> {
-        if self.byte_pos >= self.bytes.len() {
-            return None;
+        if self.nbits == 0 {
+            if self.byte_pos >= self.bytes.len() {
+                return None;
+            }
+            // Pull in up to 8 bytes at once. Already-consumed bits sit above
+            // `nbits` and are never read, so the register needn't be cleared.
+            let mut count = 0;
+            while count < 8 && self.byte_pos < self.bytes.len() {
+                self.acc = (self.acc << 8) | self.bytes[self.byte_pos] as u64;
+                self.byte_pos += 1;
+                count += 1;
+            }
+            self.nbits = count * 8;
         }
-        let bit = (self.bytes[self.byte_pos] >> (7 - self.bit_pos)) & 1 == 1;
-        self.bit_pos += 1;
-        if self.bit_pos == 8 {
-            self.bit_pos = 0;
-            self.byte_pos += 1;
-        }
-        Some(bit)
+        self.nbits -= 1;
+        Some((self.acc >> self.nbits) & 1 == 1)
     }
 }

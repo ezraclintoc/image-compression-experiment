@@ -2,8 +2,8 @@ use image::{Rgb, RgbImage};
 use std::f32::consts::PI;
 
 fn save(img: RgbImage, name: &str) {
-    std::fs::create_dir_all("images/png/math").unwrap();
-    let path = format!("images/png/math/{name}");
+    std::fs::create_dir_all("images/math").unwrap();
+    let path = format!("images/math/{name}");
     img.save(&path).unwrap_or_else(|_| panic!("Failed to save {path}"));
     println!("Generated: {name}");
 }
@@ -181,5 +181,5 @@ fn main() {
         if hash(x / 16, y / 16, 11) % 2 == 0 { Rgb([0, 0, 0]) } else { Rgb([255, 255, 255]) }
     })), "25_general_qr_like.png");
 
-    println!("\nDone. Run generate_ppm.sh to convert to PPM.");
+    println!("\nDone.");
 }

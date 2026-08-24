@@ -6,48 +6,7 @@ use std::path::PathBuf;
 mod util;
 pub use util::{pixel_index, rgb_index};
 
-pub struct LibraryConfig {
-    library_path: PathBuf,
-    search_subdirectories: bool,
-    supported_formats: Vec<String>,
-}
-
-pub fn load_image_library(config: &LibraryConfig) -> Result<Vec<PathBuf>, String> {
-    if !config.library_path.exists() {
-        return Err("Library path doesn't exist!".to_string());
-    }
-    if !config.library_path.is_dir() {
-        return Err("Library path is not a directory!".to_string());
-    }
-
-    let library_children = config
-        .library_path
-        .read_dir()
-        .map_err(|_| "Failed to read directory entries!".to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Failed to read directory entries!".to_string())?;
-
-    let mut images = Vec::new();
-    for entry in &library_children {
-        let path = entry.path();
-        if path.is_file()
-            && path.extension().map_or(false, |ext| {
-                config
-                    .supported_formats
-                    .contains(&ext.to_string_lossy().into_owned())
-            })
-        {
-            images.push(path);
-        } else if path.is_dir() && config.search_subdirectories {
-            if let Ok(mut sub_images) = load_image_library(config) {
-                images.append(&mut sub_images);
-            }
-        }
-    }
-
-    Ok(images)
-}
-
+#[derive(Clone, Copy)]
 pub struct ComparisonScore {
     pub hue_similarity: f64,
     pub saturation_similarity: f64,
@@ -104,6 +63,7 @@ pub trait ImageCompressor {
     fn decompress(&self, compressed: &CompressedImage) -> Result<RgbImage, String>;
 }
 
+#[derive(Clone)]
 pub struct CompressionStats {
     pub raw_size: usize,
     pub compressed_size: usize,
